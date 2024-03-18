@@ -1,0 +1,161 @@
+package com.example.BookingMovieTickets.Service.Impl;
+
+import com.example.BookingMovieTickets.Config.VNPay.VNPayHelper;
+import com.example.BookingMovieTickets.Config.VNPay.VnPayConstant;
+import com.example.BookingMovieTickets.Payload.DTO.OrderRequestDTO;
+import com.example.BookingMovieTickets.Payload.DTO.StatusRequestDTO;
+import com.example.BookingMovieTickets.Service.VNPayService;
+import jakarta.servlet.http.HttpServletRequest;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.json.JSONObject;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+
+@Service
+public class VNPayServiceImpl implements VNPayService {
+
+    @Override
+    public Map<String, Object> getStatus(HttpServletRequest request, StatusRequestDTO statusRequestDTO) throws IOException, IOException {
+
+        JSONObject statusQuery = new JSONObject();
+
+        statusQuery.put("vnp_RequestId", VNPayHelper.getRandomNumber(8));
+        statusQuery.put("vnp_Version", VnPayConstant.VNP_VERSION);
+        statusQuery.put("vnp_Command", VnPayConstant.VNP_COMMAND_STATUS);
+        statusQuery.put("vnp_TmnCode", VnPayConstant.VNP_TMN_CODE);
+        statusQuery.put("vnp_TxnRef", statusRequestDTO.getOrderId());
+        statusQuery.put("vnp_OrderInfo", statusRequestDTO.getOrderInfo());
+        statusQuery.put("vnp_TransactionNo", statusRequestDTO.getTransactionNo());
+        statusQuery.put("vnp_TransDate", statusRequestDTO.getTransDate());
+        statusQuery.put("vnp_CreateDate", VNPayHelper.generateDate(false));
+        statusQuery.put("vnp_IpAddr", VNPayHelper.getIpAddress(request));
+        statusQuery.put("vnp_Amount", String.valueOf(statusRequestDTO.getAmount()));
+        statusQuery.put("vnp_BankCode", VnPayConstant.VNP_BANK_CODE);
+        statusQuery.put("vnp_ResponseCode", VnPayConstant.VNP_RESPONSE_CODE); //success status
+        statusQuery.put("vnp_TransactionStatus", VnPayConstant.VNP_TRANSACTION_STATUS);
+
+        String hashData= String.join("|"
+                , statusQuery.get("vnp_RequestId").toString()
+                , statusQuery.get("vnp_Version").toString()
+                , statusQuery.get("vnp_Command").toString()
+                , statusQuery.get("vnp_TmnCode").toString()
+                , statusQuery.get("vnp_TxnRef").toString()
+                , statusQuery.get("vnp_TransDate").toString()
+                , statusQuery.get("vnp_TransactionNo").toString()
+                , statusQuery.get("vnp_CreateDate").toString()
+                , statusQuery.get("vnp_IpAddr").toString()
+                , statusQuery.get("vnp_OrderInfo").toString()
+                , statusQuery.get("vnp_BankCode").toString()
+                , statusQuery.get("vnp_ResponseCode").toString() //success status
+                , statusQuery.get("vnp_Amount").toString()
+                , statusQuery.get("vnp_TransactionStatus").toString());
+
+        String vnpSecureHash = VNPayHelper.hmacSHA512(VnPayConstant.SECRET_KEY, hashData);
+        statusQuery.put("vnp_SecureHash", vnpSecureHash);
+
+        CloseableHttpClient client = HttpClients.createDefault();
+        HttpPost post = new HttpPost(VnPayConstant.VNP_API_URL);
+
+        StringEntity stringEntity = new StringEntity(statusQuery.toString());
+        post.setHeader("content-type", "application/json");
+        post.setEntity(stringEntity);
+
+        CloseableHttpResponse res = client.execute(post);
+        BufferedReader rd = new BufferedReader(new InputStreamReader(res.getEntity().getContent()));
+        StringBuilder resultJsonStr = new StringBuilder();
+        String line;
+        while ((line = rd.readLine()) != null) {
+
+            resultJsonStr.append(line);
+        }
+
+        JSONObject object = new JSONObject(resultJsonStr.toString());
+        Map<String, Object> result = new HashMap<>();
+        for (Iterator<String> it = object.keys(); it.hasNext(); ) {
+
+            String key = it.next();
+            result.put(key, object.get(key));
+        }
+
+        return result;
+    }
+
+    @Override
+    public Map<String, Object> createOrder(HttpServletRequest request, OrderRequestDTO orderRequestDTO) throws UnsupportedEncodingException {
+
+        Map<String, Object> payload = new HashMap<>(){{
+            put("vnp_Version", VnPayConstant.VNP_VERSION);
+            put("vnp_Command", VnPayConstant.VNP_COMMAND_ORDER);
+            put("vnp_TmnCode", VnPayConstant.VNP_TMN_CODE);
+            put("vnp_Amount", String.valueOf(orderRequestDTO.getAmount() * 100));
+            put("vnp_CurrCode", VnPayConstant.VNP_CURRENCY_CODE);
+            put("vnp_TxnRef",  VNPayHelper.getRandomNumber(8));
+            put("vnp_OrderInfo", orderRequestDTO.getOrderInfo());
+            put("vnp_OrderType", VnPayConstant.ORDER_TYPE);
+            put("vnp_Locale", VnPayConstant.VNP_LOCALE);
+            put("vnp_ReturnUrl", VnPayConstant.VNP_RETURN_URL);
+            put("vnp_IpAddr", VNPayHelper.getIpAddress(request));
+            put("vnp_CreateDate", VNPayHelper.generateDate(false));
+            put("vnp_ExpireDate", VNPayHelper.generateDate(true));
+        }};
+
+        String queryUrl = getQueryUrl(payload).get("queryUrl")
+                + "&vnp_SecureHash="
+                + VNPayHelper.hmacSHA512(VnPayConstant.SECRET_KEY, getQueryUrl(payload).get("hashData"));
+
+        String paymentUrl = VnPayConstant.VNP_PAY_URL + "?" + queryUrl;
+        payload.put("redirect_url", paymentUrl);
+
+        return payload;
+    }
+
+    @Override
+    public Map<String, String> getQueryUrl(Map<String, Object> payload) throws UnsupportedEncodingException {
+
+        List<String> fieldNames = new ArrayList<>(payload.keySet());
+        Collections.sort(fieldNames);
+        StringBuilder hashData = new StringBuilder();
+        StringBuilder query = new StringBuilder();
+        Iterator<String> itr = fieldNames.iterator();
+        while (itr.hasNext()) {
+
+            String fieldName = (String) itr.next();
+            String fieldValue = (String) payload.get(fieldName);
+            if ((fieldValue != null) && (fieldValue.length() > 0)) {
+
+                //Build hash data
+                hashData.append(fieldName);
+                hashData.append('=');
+                hashData.append(URLEncoder.encode(fieldValue, StandardCharsets.US_ASCII));
+
+                //Build query
+                query.append(URLEncoder.encode(fieldName, StandardCharsets.US_ASCII));
+                query.append('=');
+                query.append(URLEncoder.encode(fieldValue, StandardCharsets.US_ASCII));
+                if (itr.hasNext()) {
+
+                    query.append('&');
+                    hashData.append('&');
+                }
+            }
+        }
+        return new HashMap<>(){{
+            put("queryUrl", query.toString());
+            put("hashData", hashData.toString());
+        }};
+    }
+
+
+}
