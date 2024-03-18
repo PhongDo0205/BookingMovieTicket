@@ -132,6 +132,8 @@ public class AdminServiceImpl implements AdminService {
     private RepoServiceImpl repoService;
 
 
+
+
     @Override
     public ResponseObject<CinemaDTO> addCinema(AddCinemaRequest request) {
         try {

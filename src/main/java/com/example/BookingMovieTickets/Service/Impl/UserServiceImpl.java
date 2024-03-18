@@ -308,22 +308,34 @@ public class UserServiceImpl implements UserService {
     }
 
     private boolean processPaymentLogic(Bill bill, String paymentMethod, HttpServletRequest request) throws IOException {
-        int total = (int) (bill.getTotalMoney()*10000);
-        String orderInfo = bill.getName();
-        OrderRequestDTO orderRequestDTO = new OrderRequestDTO();
-        orderRequestDTO.setOrderInfo(orderInfo);
-        orderRequestDTO.setAmount((long) total);
-        Map<String, Object> orderResult = vnPayService.createOrder(request, orderRequestDTO);
+        try {
+            int total = (int) (bill.getTotalMoney() * 10000);
+            String orderInfo = bill.getName();
+            OrderRequestDTO orderRequestDTO = new OrderRequestDTO();
+            orderRequestDTO.setOrderInfo(orderInfo);
+            orderRequestDTO.setAmount((long) total);
+            Map<String, Object> orderResult = vnPayService.createOrder(request, orderRequestDTO);
 
-        if (orderResult != null && orderResult.containsKey("redirect_url")) {
-            String redirectUrl = orderResult.get("redirect_url").toString();
-            HttpServletResponse response = (HttpServletResponse) request.getAttribute("javax.servlet.error.response");
-            response.sendRedirect(redirectUrl);
-            return true;
-        } else {
-            return false;
+            if (orderResult != null && orderResult.containsKey("redirect_url")) {
+                String redirectUrl = orderResult.get("redirect_url").toString();
+                HttpServletResponse response = (HttpServletResponse) request.getAttribute("javax.servlet.error.response");
+                if (response != null) {
+                    response.sendRedirect(redirectUrl);
+                    return true;
+                } else {
+                    System.err.println("HttpServletResponse is null. Cannot redirect.");
+                    return false;
+                }
+            } else {
+                System.err.println("No redirect_url found in order result.");
+                return false;
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            throw new IOException("Error occurred while processing payment logic: " + ex.getMessage(), ex);
         }
     }
+
 
 
     private double getTotalAmount(int billId, int customerId){
